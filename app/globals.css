@@ -1,0 +1,219 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink-950: #05070d;
+  --color-ink-900: #0a0e17;
+  --color-ink-850: #0d1220;
+  --color-ink-800: #111827;
+  --color-ink-700: #1a2233;
+  --color-ink-600: #232e44;
+  --color-mint-400: #34d399;
+  --color-mint-500: #10b981;
+  --color-flame-400: #fb7185;
+  --color-flame-500: #f43f5e;
+  --color-gold-400: #fbbf24;
+  --color-sky-400: #38bdf8;
+  --color-violet-400: #a78bfa;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-ink-950);
+  color: #e2e8f0;
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #232e44 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #232e44;
+  border-radius: 4px;
+}
+
+/* ---------- keyframes ---------- */
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.5);
+  }
+  50% {
+    opacity: 0.7;
+    box-shadow: 0 0 0 6px rgba(52, 211, 153, 0);
+  }
+}
+
+@keyframes feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+    background-color: rgba(56, 189, 248, 0.08);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    background-color: transparent;
+  }
+}
+
+@keyframes ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes flash-green {
+  0% {
+    background-color: rgba(52, 211, 153, 0.25);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes flash-red {
+  0% {
+    background-color: rgba(244, 63, 94, 0.25);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes scanline {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+@keyframes heartbeat-wave {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  15% {
+    transform: scaleY(1);
+  }
+  30% {
+    transform: scaleY(0.45);
+  }
+  45% {
+    transform: scaleY(0.85);
+  }
+  60% {
+    transform: scaleY(0.4);
+  }
+}
+
+@keyframes glow-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+  }
+  50% {
+    box-shadow: 0 0 14px 2px rgba(56, 189, 248, 0.35);
+  }
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- utility classes ---------- */
+
+.anim-pulse-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+.anim-feed-in {
+  animation: feed-in 0.45s ease-out;
+}
+
+.anim-ticker {
+  animation: ticker-scroll 40s linear infinite;
+}
+.anim-ticker:hover {
+  animation-play-state: paused;
+}
+
+.anim-flash-green {
+  animation: flash-green 0.8s ease-out;
+}
+.anim-flash-red {
+  animation: flash-red 0.8s ease-out;
+}
+
+.anim-scanline {
+  animation: scanline 1.8s linear infinite;
+}
+
+.anim-shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(56, 189, 248, 0.12) 50%, transparent 100%);
+  background-size: 400px 100%;
+  animation: shimmer 2.4s linear infinite;
+}
+
+.anim-heartbeat span {
+  display: inline-block;
+  width: 3px;
+  margin-right: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  animation: heartbeat-wave 1.4s ease-in-out infinite;
+}
+.anim-heartbeat span:nth-child(2) {
+  animation-delay: 0.12s;
+}
+.anim-heartbeat span:nth-child(3) {
+  animation-delay: 0.24s;
+}
+.anim-heartbeat span:nth-child(4) {
+  animation-delay: 0.36s;
+}
+.anim-heartbeat span:nth-child(5) {
+  animation-delay: 0.48s;
+}
+.anim-heartbeat span:nth-child(6) {
+  animation-delay: 0.6s;
+}
+.anim-heartbeat span:nth-child(7) {
+  animation-delay: 0.72s;
+}
+
+.anim-glow {
+  animation: glow-ring 2.2s ease-in-out infinite;
+}
+
+.anim-spin-slow {
+  animation: spin-slow 3s linear infinite;
+}
