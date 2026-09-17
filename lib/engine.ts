@@ -3,22 +3,33 @@ import type {
   AgentId,
   AgentEventType,
   Analysis,
+  JobKind,
   MarketPair,
   Opportunity,
   PerpPosition,
   PerpTicket,
   Position,
+  ScheduledJob,
   Trade,
 } from "./types";
 import { clamp, uid } from "./rng";
-import { tickMarket } from "./market";
-import { TICK_MS, clampScore, type DeskState } from "./desk";
+import { clampScore, type DeskState } from "./desk";
+import { sizeMarginFromEquity } from "./account";
 
 const MAX_EVENTS = 400;
 const MAX_OPPS = 60;
 const MAX_TRADES = 200;
 const MAX_TICKETS = 80;
 const TICKET_TTL_MS = 90_000;
+/** Pairs older than this since the last live blend are ignored by the scout. */
+export const STALE_MS = 120_000;
+/**
+ * M6: paper fills and paper ticket proposals exist only as a local-dev
+ * harness (NEXT_PUBLIC_DESK_PAPER_MODE=true). Default off: the engine scores
+ * live data (opportunities, analyses) but fabricates no fills, positions, or
+ * signatures. Build-time value — restart dev after changing.
+ */
+export const PAPER_MODE = process.env.NEXT_PUBLIC_DESK_PAPER_MODE === "true";
 
 /** EIP-712 domain + typed order the executor signs with MetaMask (Arbitrum One). */
 const DESK_PERP_DOMAIN = {
@@ -61,8 +72,8 @@ export function runTick(state: DeskState): void {
   state.tick += 1;
   state.now = Date.now();
 
-  // 1. Market moves for everyone.
-  state.pairs = tickMarket(state.pairs);
+  // 1. Prices move only via live blends (store poll -> applyLivePrices).
+  // Stale pairs hold their last live values; nothing is simulated.
   markPositions(state);
   markPerps(state);
 
@@ -91,14 +102,26 @@ function markPositions(state: DeskState) {
 function scoutPhase(state: DeskState): Opportunity[] {
   const scout = state.agents.scout;
   scout.state = "scanning";
-  scout.currentTask = `Scanning ${state.pairs.length} pairs across Solana + EVM`;
   scout.heartbeatAt = state.now;
   scout.cycle += 1;
+
+  // Live data only: pairs never blended (or gone stale) carry reference
+  // values, not market truth — scoring them would invent opportunities.
+  const tradeable = state.pairs.filter(
+    (p) => p.liveLastAt !== null && state.now - p.liveLastAt <= STALE_MS
+  );
+  if (tradeable.length === 0) {
+    scout.currentTask = "Waiting for live feed — no fresh pairs";
+    scout.lastOutput = "Idle: feed stale or unreachable";
+    scout.state = "idle";
+    return [];
+  }
+  scout.currentTask = `Scanning ${tradeable.length} live pairs across Solana + EVM`;
 
   const found: Opportunity[] = [];
   const maxNew = 1 + (Math.random() < 0.35 ? 1 : 0);
 
-  for (const pair of shuffled(state.pairs).slice(0, state.pairs.length)) {
+  for (const pair of shuffled(tradeable).slice(0, tradeable.length)) {
     if (found.length >= maxNew) break;
     const heat = Math.abs(pair.change24h) / 8 + pair.volatility * 0.5;
     if (heat > 0.75 && Math.random() < 0.5) {
@@ -218,8 +241,9 @@ function analystPhase(state: DeskState, fresh: Opportunity[]): Analysis[] {
     );
   }
 
-  // Analyst derives a full perp trade ticket for every BUY signal.
-  const newTickets = createPerpTickets(state, out);
+  // Paper ticket proposals (M6 harness): fake EIP-712 payloads are minted only
+  // in paper mode. Scoring (opportunities, analyses) always continues.
+  const newTickets = PAPER_MODE ? createPerpTickets(state, out) : [];
   if (newTickets.length) state.tickets = [...newTickets, ...state.tickets].slice(0, MAX_TICKETS);
   expireStaleTickets(state);
 
@@ -253,8 +277,20 @@ function createPerpTickets(state: DeskState, analyses: Analysis[]): PerpTicket[]
     const opp = state.opportunities.find((o) => o.id === a.opportunityId);
     const side: "long" | "short" = opp?.bias ?? (Math.random() < 0.5 ? "long" : "short");
 
-    // Risk sizing: confidence sets the margin, volatility trims it.
-    const sizeUsd = Math.max(500, Math.round((1_500 + (a.confidence / 100) * 3_500) * (1 - pair.volatility * 0.35)));
+    // Risk sizing: margin is a fraction of connected-wallet equity
+    // (0.5% + confidence*2%, volatility-trimmed, $50 min, 10% of equity max).
+    // Falls back to the legacy fixed sizer when equity is unknown.
+    const equity = state.accountEquityUsd;
+    let sizeUsd: number;
+    let sizingNote: string;
+    if (equity !== null && equity > 0) {
+      const sized = sizeMarginFromEquity(equity, a.confidence, pair.volatility);
+      sizeUsd = sized.marginUsd;
+      sizingNote = ` · ${(sized.riskFrac * 100).toFixed(1)}% of $${Math.round(equity).toLocaleString()} equity`;
+    } else {
+      sizeUsd = Math.max(500, Math.round((1_500 + (a.confidence / 100) * 3_500) * (1 - pair.volatility * 0.35)));
+      sizingNote = " · fixed size (wallet disconnected)";
+    }
     // Leverage: calmer pairs get more room, confidence adds a touch. 2..10x.
     const leverage = Math.round(clamp(11 - pair.volatility * 9 + (a.confidence / 100) * 2, 2, 10));
 
@@ -281,10 +317,11 @@ function createPerpTickets(state: DeskState, analyses: Analysis[]): PerpTicket[]
       stopLoss,
       confidence: a.confidence,
       breakdown: a.breakdown,
-      note: `${side === "long" ? "Long" : "Short"} bias from ${side === "long" ? "positive" : "negative"} momentum · lev ${leverage}x · risk-sized $${sizeUsd.toLocaleString()}`,
+      note: `${side === "long" ? "Long" : "Short"} bias from ${side === "long" ? "positive" : "negative"} momentum · lev ${leverage}x · risk-sized $${sizeUsd.toLocaleString()}${sizingNote}`,
       status: "proposed",
       createdAt: state.now,
       expiresAt: state.now + TICKET_TTL_MS,
+      equityUsd: equity,
       order: {
         domain: DESK_PERP_DOMAIN,
         primaryType: "PerpOrder",
@@ -314,6 +351,7 @@ function createPerpTickets(state: DeskState, analyses: Analysis[]): PerpTicket[]
         side,
         leverage,
         sizeUsd,
+        equityUsd: equity,
         liqPrice,
       })
     );
@@ -386,8 +424,17 @@ export function closePerpPosition(
 
 function executorPhase(state: DeskState, analyses: Analysis[]) {
   const executor = state.agents.executor;
-  executor.state = "executing";
   executor.heartbeatAt = state.now;
+  if (!PAPER_MODE) {
+    // M6: no paper fills outside the dev harness. Live flow is explicit via
+    // the Perps Desk venue panel. `analyses` intentionally unused here.
+    void analyses;
+    executor.state = "idle";
+    executor.currentTask = "Paper executor disabled — live orders via Perps Desk";
+    executor.lastOutput = "No paper fills (M6)";
+    return;
+  }
+  executor.state = "executing";
 
   const buys = analyses.filter((a) => a.signal === "BUY");
   const maxNew = Math.max(0, 3 - state.positions.length);
@@ -504,6 +551,33 @@ function closePosition(state: DeskState, posId: string, reason: string) {
 
 // ---------- JOBS ----------
 
+/** Handler registry: job behavior is bound to kind, not id, so user-added
+ *  jobs run the same handlers as the built-ins. Unknown kinds warn and skip —
+ *  a bad job must never crash the tick. */
+const JOB_HANDLERS: Record<JobKind, (state: DeskState, job: ScheduledJob) => void> = {
+  scan: (state) => {
+    pushEvent(state, ev("scout", "job", "Job: market scan", `Swept ${state.pairs.length} pairs · ${state.opportunities.filter((o) => o.status === "pending").length} pending in queue`));
+  },
+  analysis: (state) => {
+    pushEvent(state, ev("analyst", "job", "Job: signal refresh", `${state.analyses.length} lifetime scores · ${state.opportunities.filter((o) => o.status === "pending").length} awaiting review`));
+  },
+  exec: (state) => {
+    pushEvent(state, ev("executor", "job", "Job: signal sweep", `${state.trades.length} lifetime fills · ${state.positions.length} open positions`));
+  },
+  rebalance: (state) => {
+    rebalance(state);
+  },
+  risk: (state) => {
+    riskSweep(state);
+  },
+  heartbeat: (state) => {
+    for (const id of ["scout", "analyst", "executor"] as AgentId[]) {
+      setAgent(state, id, { heartbeatAt: state.now });
+    }
+    pushEvent(state, ev("scout", "heartbeat", "Heartbeat OK", "All 3 agents responsive · pipeline latency nominal"));
+  },
+};
+
 function runDueJobs(state: DeskState) {
   const now = state.now;
   for (const job of state.jobs) {
@@ -512,33 +586,17 @@ function runDueJobs(state: DeskState) {
     job.runCount += 1;
     job.nextRunAt = now + job.intervalMs;
 
-    switch (job.id) {
-      case "job-scan":
-        pushEvent(state, ev("scout", "job", "Job: market scan", `Swept ${state.pairs.length} pairs · ${state.opportunities.filter((o) => o.status === "pending").length} pending in queue`));
-        break;
-      case "job-analysis":
-        pushEvent(state, ev("analyst", "job", "Job: signal refresh", `${state.analyses.length} lifetime scores · ${state.opportunities.filter((o) => o.status === "pending").length} awaiting review`));
-        break;
-      case "job-exec":
-        pushEvent(state, ev("executor", "job", "Job: signal sweep", `${state.trades.length} lifetime fills · ${state.positions.length} open positions`));
-        break;
-      case "job-rebalance":
-        rebalance(state);
-        break;
-      case "job-risk":
-        riskSweep(state);
-        break;
-      case "job-heartbeat":
-        for (const id of ["scout", "analyst", "executor"] as AgentId[]) {
-          setAgent(state, id, { heartbeatAt: now });
-        }
-        pushEvent(state, ev("scout", "heartbeat", "Heartbeat OK", "All 3 agents responsive · pipeline latency nominal"));
-        break;
+    const handler = JOB_HANDLERS[job.kind];
+    if (!handler) {
+      pushEvent(state, ev("scout", "job", `Job skipped: unknown kind`, `Job "${job.name}" has kind "${job.kind}" — no handler registered`, { jobId: job.id }));
+      continue;
     }
+    handler(state, job);
   }
 }
 
 function rebalance(state: DeskState) {
+  if (!PAPER_MODE) return; // nothing paper to rebalance outside the harness
   for (const pos of [...state.positions]) {
     if (pos.pnlPct > 6) closePosition(state, pos.id, "rebalance: take-profit");
     else if (pos.pnlPct < -4) closePosition(state, pos.id, "rebalance: stop-loss");

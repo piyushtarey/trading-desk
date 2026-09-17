@@ -27,13 +27,13 @@ Analyst output: `Analysis { id, opportunityId, symbol, chain, signal (BUY|WATCH|
 ### Perps: `PerpTicket` + `PerpPosition` (`lib/types.ts:40`, `63`, `88`)
 
 - `PerpTicketStatus = proposed|signed|executed|cancelled|expired`.
-- `PerpTicket { id, analysisId, opportunityId, symbol, chain, side, entryPrice, sizeUsd (margin), leverage (2..10), notionalUsd, liqPrice, takeProfit, stopLoss, confidence, breakdown, note, status, createdAt, expiresAt (+90s), signedBy?, signature?, order?: PerpOrderPayload }`. Newest-first, capped at 80.
+- `PerpTicket { id, analysisId, opportunityId, symbol, chain, side, entryPrice, sizeUsd (margin), leverage (2..10), notionalUsd, liqPrice, takeProfit, stopLoss, confidence, breakdown, note, status, createdAt, expiresAt (+90s), equityUsd? (wallet equity the margin was sized from, null when unknown), signedBy?, signature?, order?: PerpOrderPayload }`. Newest-first, capped at 80.
 - `PerpOrderPayload`: EIP-712 payload — `domain {name: Trading Desk Perps, version: 1, chainId: 42161, verifyingContract: 0x0…0}`, `primaryType: PerpOrder`, 12 typed fields (symbol/side/qty/entryPrice/leverage/notionalUsd/liqPrice/takeProfit/stopLoss as strings, `expiresAt: uint256` seconds, `nonce: string`).
 - `PerpPosition { id, ticketId, symbol, chain, side, qty, leverage, entryPrice, markPrice, marginUsd, notionalUsd, liqPrice, takeProfit, stopLoss, pnl (leveraged USD), pnlPct (% on margin), openedAt, status (open|closed), closedVia? (take-profit|stop-loss|liquidation|manual), closedAt?, realizedPnl? }`.
 
 ### `ScheduledJob` (`lib/types.ts:160`)
 
-`{ id, agent (scout|analyst|executor|system), name, description, intervalMs, nextRunAt, lastRunAt|null, runCount, paused }`. Six jobs created by `createJobs(now)` (`lib/desk.ts:40`).
+`{ id, kind (scan|analysis|exec|rebalance|risk|heartbeat — the handler key, not the id), builtIn, agent (scout|analyst|executor|system), name, description, intervalMs (10s–24h enforced), nextRunAt, lastRunAt|null, runCount, paused }`. Six built-ins from `createJobs`; custom jobs append with `builtIn: false`. Overrides + customs persist in `localStorage` (`tradingdesk.jobs.v1`); timers restart on boot (`nextRunAt = now + interval`) so reloads never fire a stale burst.
 
 ### `AgentEvent` (`lib/types.ts:172`, `185`)
 
@@ -50,8 +50,12 @@ Runtime slice per agent: `{ state, currentTask, lastOutput, heartbeatAt, cycle, 
 ```ts
 { running, tick, now, pairs, opportunities, analyses, positions, trades,
   events, agents, jobs, startedAt, marketSource (sim|coingecko|binance),
-  lastLiveAt|null, tickets, perpPositions }
+  lastLiveAt|null, tickets, perpPositions, accountEquityUsd|null }
 ```
+
+`accountEquityUsd` is the connected-wallet USD value (`lib/account.ts`: native
+balance × desk live price, demo at paper value), refreshed every tick — the
+input to ticket margin sizing. Null when disconnected/loading.
 
 ## Lifecycles
 

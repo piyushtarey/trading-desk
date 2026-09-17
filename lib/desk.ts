@@ -33,6 +33,9 @@ export interface DeskState {
   tickets: PerpTicket[];
   /** Leveraged positions opened from executed tickets (open + closed, newest first). */
   perpPositions: PerpPosition[];
+  /** Connected-wallet equity in USD (lib/account.ts) — drives ticket sizing.
+   *  Null when disconnected/loading. Refreshed every tick from wallet+prices. */
+  accountEquityUsd: number | null;
 }
 
 export const TICK_MS = 2000;
@@ -41,6 +44,8 @@ export function createJobs(now: number): ScheduledJob[] {
   return [
     {
       id: "job-scan",
+      kind: "scan",
+      builtIn: true,
       agent: "scout",
       name: "Market scan",
       description: "Sweep all pairs for fresh momentum & liquidity anomalies",
@@ -52,6 +57,8 @@ export function createJobs(now: number): ScheduledJob[] {
     },
     {
       id: "job-analysis",
+      kind: "analysis",
+      builtIn: true,
       agent: "analyst",
       name: "Signal refresh",
       description: "Re-score open opportunities, expire stale ones",
@@ -63,6 +70,8 @@ export function createJobs(now: number): ScheduledJob[] {
     },
     {
       id: "job-exec",
+      kind: "exec",
+      builtIn: true,
       agent: "executor",
       name: "Signal sweep",
       description: "Pick up analyst BUY signals and paper-execute",
@@ -74,6 +83,8 @@ export function createJobs(now: number): ScheduledJob[] {
     },
     {
       id: "job-rebalance",
+      kind: "rebalance",
+      builtIn: true,
       agent: "executor",
       name: "Portfolio rebalance",
       description: "Trim positions > 20% of book, take profit > +6%",
@@ -85,6 +96,8 @@ export function createJobs(now: number): ScheduledJob[] {
     },
     {
       id: "job-risk",
+      kind: "risk",
+      builtIn: true,
       agent: "analyst",
       name: "Risk sweep",
       description: "Check drawdown and volatility spikes across book",
@@ -96,6 +109,8 @@ export function createJobs(now: number): ScheduledJob[] {
     },
     {
       id: "job-heartbeat",
+      kind: "heartbeat",
+      builtIn: true,
       agent: "system",
       name: "Health heartbeat",
       description: "All agents ping in, verify pipeline is alive",

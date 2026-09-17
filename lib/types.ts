@@ -1,5 +1,8 @@
 export type AgentId = "scout" | "analyst" | "executor";
 
+/** Fixed handler set for scheduled jobs — the add-job form picks from these. */
+export type JobKind = "scan" | "analysis" | "exec" | "rebalance" | "risk" | "heartbeat";
+
 export type AgentState = "idle" | "scanning" | "analyzing" | "executing" | "waiting";
 
 export type Chain = "solana" | "evm";
@@ -80,6 +83,8 @@ export interface PerpTicket {
   status: PerpTicketStatus;
   createdAt: number;
   expiresAt: number;
+  /** Account equity (USD) the margin was sized from — null when unknown. */
+  equityUsd?: number | null;
   signedBy?: string;
   signature?: string;
   order?: PerpOrderPayload;
@@ -159,6 +164,10 @@ export interface Trade {
 
 export interface ScheduledJob {
   id: string;
+  /** Handler key — behavior is bound to kind, not id (lib/engine.ts registry). */
+  kind: JobKind;
+  /** False for user-added jobs. Built-ins are deletable but flagged. */
+  builtIn: boolean;
   agent: AgentId | "system";
   name: string;
   description: string;

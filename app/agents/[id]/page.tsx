@@ -7,6 +7,7 @@ import { fmtTime } from "@/lib/format";
 import type { AgentId } from "@/lib/types";
 import ActivityFeed from "@/components/ActivityFeed";
 import HistoryTable from "@/components/HistoryTable";
+import LlmAnalystPanel from "@/components/LlmAnalystPanel";
 import { Panel } from "@/components/ui";
 
 const META: Record<AgentId, { name: string; role: string; accent: string; icon: string }> = {
@@ -63,6 +64,9 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         <Stat label="Tasks done" value={String(runtime.tasksDone)} />
         <Stat label="Events logged" value={String(agentEvents.length)} />
       </div>
+
+      {/* LLM advisory (renders only when a model is configured) */}
+      {agentId === "analyst" && <LlmAnalystPanel />}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Panel title="Current task" bodyClassName="space-y-3">

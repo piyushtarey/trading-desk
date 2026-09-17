@@ -5,3 +5,6 @@ out
 .DS_Store
 dev.log
 .freebuff/
+# Server secrets — never commit real env files (.env.example is the template).
+.env*
+!.env.example

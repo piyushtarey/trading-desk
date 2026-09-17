@@ -7,7 +7,8 @@ All logic in `lib/engine.ts` (pure, mutates the passed `DeskState`), `lib/market
 Every `TICK_MS` (2000ms) when `running`:
 
 1. `tick++`, `now = Date.now()`.
-2. `pairs = tickMarket(pairs)`; `markPositions`; `markPerps` (auto-closes hit perps).
+2. `markPositions` / `markPerps` on the current live-blended pairs (prices move
+   only via `applyLivePrices` blends from the 15s poll; stale pairs hold last values).
 3. `scoutPhase` → `analystPhase` → `executorPhase` (synchronous pipeline, same tick).
 4. `runDueJobs`.
 
@@ -20,7 +21,10 @@ When paused, only `now` updates (clocks keep moving, market/agents freeze).
 
 ## Scout (`scoutPhase`, `lib/engine.ts:91`)
 
-- Sets `scout.state = scanning`, task `Scanning N pairs across Solana + EVM`, heartbeat + cycle bump.
+- Sets `scout.state = scanning`, heartbeat + cycle bump.
+- **Freshness gate**: only pairs blended within `STALE_MS` (120s, `lib/engine.ts`)
+  are tradeable. With none fresh, the scout idles (`Waiting for live feed`) and
+  returns no opportunities — reference values are never scored.
 - `maxNew = 1 + (35% chance of +1)`.
 - Shuffles pairs; `heat = |change24h|/8 + volatility*0.5`; if `heat > 0.75 && Math.random() < 0.5` → new `Opportunity`:
   - `momentum = clamp(|change|/8)`, `liquidityScore = clamp(liquidity/60M)`, `volRisk = volatility`, `bias = change ≥ 0 ? long : short`, `status = pending`.
@@ -42,8 +46,9 @@ When paused, only `now` updates (clocks keep moving, market/agents freeze).
 
 ### Perp ticket creation
 
-- Candidates: BUY analyses with `confidence ≥ 68`, no open `proposed` ticket for the same symbol, max 2 per cycle.
-- Sizing: `sizeUsd = max(500, round((1500 + confFraction*3500) * (1 − vol*0.35)))`; `leverage = round(clamp(11 − vol*9 + confFraction*2, 2, 10))`; `notional = size*lev`.
+- Candidates: BUY analyses with `confidence ≥ 68`, no open `proposed` ticket for the same symbol, max 2 per cycle. (Paper-mode harness only — no tickets are minted by default in M6.)
+- Sizing: margin is a fraction of connected-wallet equity (`state.accountEquityUsd`, refreshed every tick): `risk = 0.5% + confidence×2.0%`, `margin = equity × risk × (1 − vol×0.35)`, clamped to `$50 min / 10% of equity max` (`lib/account.ts`). Disconnected wallets fall back to the legacy fixed sizer (`$500 min`). The equity snapshot rides on the ticket (`equityUsd`) and the ticket-book margin cell shows what it was sized off.
+- Leverage: `leverage = round(clamp(11 − vol*9 + confFraction*2, 2, 10))`; `notional = size*lev`.
 - Levels: `drift = 3–6%` (`expPct(0.045, 0.03)`); entry = live pair price; TP/SL = entry ± drift / ± drift*0.6 (sign by side); liq distance `0.92/lev` against the side.
 - Order: EIP-712 `PerpOrderPayload` — domain `Trading Desk Perps / 1 / 42161 / 0x0…0`, qty `(size*lev/entry).toFixed(6)`, prices `toPrecision(8)`, `expiresAt` seconds, random hex `nonce`.
 - TTL 90s (`TICKET_TTL_MS`, `lib/engine.ts:21`); emits `ticket` event per creation.
@@ -76,16 +81,19 @@ When paused, only `now` updates (clocks keep moving, market/agents freeze).
 
 Due job: `lastRunAt = now`, `runCount++`, `nextRunAt = now + interval`. Paused jobs are skipped (`toggleJob` flips `paused`; resuming sets `nextRunAt = now + 5s`). `runJobNow` forces `nextRunAt = now`.
 
-## Seed history (`lib/seed.ts`)
+## Seed history (removed in M2)
 
-- Deterministic PRNG `mulberry32(1337)`; walks 48 hourly steps (`h = 47..0`), 0–3 opps/hour on random `PAIR_SEEDS`.
-- Same scoring formula as live (thresholds BUY ≥ 68 / WATCH ≥ 44 here); BUYs roll tickets (50%) and spot buys (70%, sells 65% after 5–60m with `move = (rand−0.42)*9%`); occasional job/risk/heartbeat events.
-- Fresh (<2m) tickets weighted proposed/executed/cancelled/expired; older only executed/cancelled/expired.
-- Derives spot `positions` (last buy per symbol without later sell, marked from current pairs) and `perpPositions` (executed tickets; still-open 85% if <30m else 30%; closed with exit drift + via take-profit/manual/stop-loss/liquidation + `fill` event).
-- Caps: events ≤ 400, analyses ≤ 200, trades ≤ 200, opps ≤ 60, tickets ≤ 80, perps ≤ 40; all newest-first.
+`lib/seed.ts` (deterministic 48h fake history, mulberry32 seed `1337`) was deleted.
+The desk boots with empty books and anchors on the first live poll — an empty desk
+before live data is honest. No seeded trades, tickets, or events exist anymore.
 
 ## Market (`lib/market.ts`)
 
-- `PAIR_SEEDS`: SOL 148.32, JUP/SOL 0.86, BONK/SOL 0.0000216, WIF 1.94, JTO 2.61, ETH 3120.5, WBTC/ETH 19.8, ARB 0.74, OP 1.62, LINK 14.27, UNI 7.83, AAVE 142.6 (with per-seed vol/liq).
-- `createMarket`: spark 24 pts (sine + random walk), `change24h = (rand−0.45)*8`, `volume = liq*(0.4+rand*0.8)`, `liveLastAt = null`.
-- `tickMarket`: global shove `(rand−0.5)*0.002`, per-pair `vol = 0.0012 + volatility*0.004`, 3% shock ±1%, spark cap 48, `change24h` decay + return reaction, volume/liquidity drift.
+- `PAIR_SEEDS`: the 12-pair universe (metadata + reference prices + static
+  liquidity): SOL 148.32, JUP/SOL 0.86, BONK/SOL 0.0000216, WIF 1.94, JTO 2.61,
+  ETH 3120.5, WBTC/ETH 19.8, ARB 0.74, OP 1.62, LINK 14.27, UNI 7.83, AAVE 142.6.
+- `createMarket()`: bootstrap shells (reference price, `change24h: 0`,
+  single-point spark, `liveLastAt: null`). First `applyLivePrices` blend replaces
+  every display value; the ticker badge shows SIM until then.
+- Price movement comes exclusively from live blends (`lib/prices.ts`); the old
+  `tickMarket` random-walk was deleted. Uncovered/stale pairs hold last values.

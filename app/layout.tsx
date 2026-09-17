@@ -4,6 +4,7 @@ import { DeskProvider } from "@/lib/store";
 import { WalletProvider } from "@/lib/wallet";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
+import HaltBanner from "@/components/HaltBanner";
 
 export const metadata: Metadata = {
   title: "Trading Desk — 3-Agent Sync",
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Sidebar />
               <div className="flex min-w-0 flex-1 flex-col">
                 <Header />
+                <HaltBanner />
                 <main className="min-h-0 flex-1 overflow-y-auto bg-ink-950">{children}</main>
               </div>
             </div>

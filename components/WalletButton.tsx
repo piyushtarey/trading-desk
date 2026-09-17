@@ -81,16 +81,19 @@ export default function WalletButton() {
                 }}
               />
               <div className="my-1 border-t border-ink-700" />
-              <button
-                onClick={() => {
-                  setOpen(false);
-                  void connect("demo");
-                }}
-                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs text-slate-400 transition-colors hover:bg-ink-700 hover:text-slate-200"
-              >
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-400/10">⚡</span>
-                Demo wallet (no extension)
-              </button>
+              {/* M6: demo wallet is a paper-mode dev tool — hidden in production. */}
+              {process.env.NEXT_PUBLIC_DESK_PAPER_MODE === "true" && (
+                <button
+                  onClick={() => {
+                    setOpen(false);
+                    void connect("demo");
+                  }}
+                  className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs text-slate-400 transition-colors hover:bg-ink-700 hover:text-slate-200"
+                >
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-400/10">⚡</span>
+                  Demo wallet (paper mode)
+                </button>
+              )}
             </div>
           )}
         </div>

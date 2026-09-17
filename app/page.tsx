@@ -4,6 +4,7 @@ import { useDesk } from "@/lib/store";
 import { TICK_MS } from "@/lib/desk";
 import { fmtTime } from "@/lib/format";
 import KpiCards from "@/components/KpiCards";
+import WalletBalancePanel from "@/components/WalletBalancePanel";
 import AgentBoard from "@/components/AgentBoard";
 import ActivityFeed from "@/components/ActivityFeed";
 import ScheduleList from "@/components/ScheduleList";
@@ -34,6 +35,7 @@ export default function DashboardPage() {
         </button>
       </div>
 
+      <WalletBalancePanel />
       <KpiCards />
       <AgentBoard />
 

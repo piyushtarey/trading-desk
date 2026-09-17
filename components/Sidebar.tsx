@@ -8,6 +8,7 @@ const NAV = [
   { href: "/", label: "Dashboard", icon: "▤" },
   { href: "/agents", label: "Agents", icon: "◇" },
   { href: "/perps", label: "Perps", icon: "⚡" },
+  { href: "/jobs", label: "Jobs", icon: "◷" },
   { href: "/history", label: "History", icon: "≣" },
 ];
 
@@ -44,6 +45,11 @@ export default function Sidebar() {
               {item.href === "/history" && (
                 <span className="ml-auto rounded bg-ink-600 px-1.5 py-0.5 text-[10px] text-slate-300">
                   {state.events.length}
+                </span>
+              )}
+              {item.href === "/jobs" && (
+                <span className="ml-auto rounded bg-ink-600 px-1.5 py-0.5 text-[10px] text-slate-300">
+                  {state.jobs.filter((j) => !j.paused).length}/{state.jobs.length}
                 </span>
               )}
               {item.href === "/perps" && (

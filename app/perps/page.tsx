@@ -3,6 +3,7 @@
 import { useDesk } from "@/lib/store";
 import { useWallet } from "@/lib/wallet";
 import { Panel } from "@/components/ui";
+import LiveOrderPanel from "@/components/LiveOrderPanel";
 import { fmtUsd, fmtPct, fmtTime, fmtQty } from "@/lib/format";
 
 export default function PerpsPage() {
@@ -23,7 +24,7 @@ export default function PerpsPage() {
   const totalNotional = open.reduce((a, p) => a + p.notionalUsd, 0);
 
   return (
-    <div className="mx-auto max-w-6xl p-6">
+    <div className="mx-auto w-full max-w-none p-4 md:p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold tracking-tight">Perps Desk</h1>
@@ -59,6 +60,9 @@ export default function PerpsPage() {
         />
         <Kpi label="AWAITING EXECUTION" value={String(awaiting)} sub="tickets expiring in 90s" />
       </div>
+
+      {/* LIVE VENUE ORDERS (renders only when the server exposes a configured venue) */}
+      <LiveOrderPanel />
 
       {/* TICKET BOOK */}
       <Panel title="Ticket Book — analyst proposals" className="mt-5" bodyClassName="p-0">
@@ -114,6 +118,11 @@ export default function PerpsPage() {
                     <Td mono>{t.entryPrice.toPrecision(6)}</Td>
                     <Td>
                       {fmtUsd(t.sizeUsd, { compact: true })} → <span className="text-slate-400">{fmtUsd(t.notionalUsd, { compact: true })}</span>
+                      {t.equityUsd !== null && t.equityUsd !== undefined && t.equityUsd > 0 ? (
+                        <div className="text-[9px] text-slate-600">sized off {fmtUsd(t.equityUsd, { compact: true })} eq</div>
+                      ) : (
+                        <div className="text-[9px] text-slate-600">fixed size (no wallet)</div>
+                      )}
                     </Td>
                     <Td>
                       <span className="text-flame-400">{t.liqPrice.toPrecision(5)}</span>

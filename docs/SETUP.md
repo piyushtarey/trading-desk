@@ -43,9 +43,9 @@ npm run start      # serve the production build (default port 3000)
 ## Live data behavior
 
 - No `.env*` needed. Price/wallet paths use public endpoints only.
-- `GET /api/prices` tries CoinGecko first (free tier rate-limits aggressively), falls back to Binance, else the client keeps simulating. A `502` from the API is normal under rate limits — the ticker badge flips to `SIM`/`STALE` and the desk continues.
+- `GET /api/prices` tries CoinGecko first (free tier rate-limits aggressively), falls back to Binance `ticker/24hr` (price + 24h change + volume), else the client holds last live values. A `502` from the API is normal under rate limits — the ticker badge flips to `STALE`/`SIM`, the scout idles, and the desk recovers on the next poll.
 - `POST /api/sol-balance` proxies `https://api.mainnet-beta.solana.com` because browsers get 403 calling it directly. Failures leave the balance blank; Demo wallet always works.
-- First paint is seeded with 48h of deterministic history (`lib/seed.ts`, mulberry32 seed `1337`), so the desk looks alive before the first live poll.
+- First paint boots with empty books and anchors on the first live poll — an empty desk before live data is expected, not a bug.
 
 ## Git-ignored (local only)
 

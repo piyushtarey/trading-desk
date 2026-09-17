@@ -27,6 +27,7 @@ export interface PriceFeed {
   at: number;
   prices: Record<string, number>; // coinId -> USD price
   changes24h?: Record<string, number>; // coinId -> 24h change percent (when upstream provides it)
+  volumes24h?: Record<string, number>; // coinId -> 24h quote volume in USD (Binance path)
 }
 
 /**
@@ -34,44 +35,61 @@ export interface PriceFeed {
  *
  * - price is overwritten with the live value (prevPrice rolled for tick-flash colors)
  * - spark gets the live point appended (48-point window kept)
- * - change24h adopted from the feed when provided
- * - volume24h/liquidity scale with the price move so agent scores stay coherent
+ * - change24h adopted from the feed when provided (cross pairs derive it from legs)
+ * - volume24h adopted when provided, otherwise gently re-anchored to the move
  * - volatility gets a refresh from the tick-to-tick return (slow EMA)
- * - pairs the feed doesn't cover keep their simulated walk (e.g. BONK on Binance fallback)
+ * - pairs the feed doesn't cover hold their last values (staleness is visible
+ *   via liveLastAt — there is no simulated walk anymore)
  */
 export function applyLivePrices(pairs: MarketPair[], feed: PriceFeed, now: number): MarketPair[] {
   const usd = feed.prices;
-  const live = new Map<string, { price: number; change24h?: number }>();
+  const live = new Map<string, { price: number; change24h?: number; volume?: number }>();
 
   for (const [coinId, pairId] of Object.entries(COIN_TO_PAIR)) {
     const price = usd[coinId];
     if (typeof price === "number" && Number.isFinite(price) && price > 0) {
-      live.set(pairId, { price, change24h: feed.changes24h?.[coinId] });
+      const change = feed.changes24h?.[coinId];
+      const volume = feed.volumes24h?.[coinId];
+      live.set(pairId, {
+        price,
+        change24h: typeof change === "number" && Number.isFinite(change) ? change : undefined,
+        volume: typeof volume === "number" && Number.isFinite(volume) && volume > 0 ? volume : undefined,
+      });
     }
   }
 
-  // Cross-rate pairs from the USD legs. If the pair was already mapped above
-  // (CoinGecko supplies its change directly), keep that change24h.
-  const put = (pairId: string, price: number) => {
+  // Cross-rate pairs from the USD legs. A directly supplied change24h wins;
+  // otherwise derive it from the legs: (1+cb)/(1+cq)-1.
+  const put = (pairId: string, price: number, change24h?: number) => {
     const existing = live.get(pairId);
-    live.set(pairId, { price, change24h: existing?.change24h });
+    live.set(pairId, {
+      price,
+      change24h: existing?.change24h ?? change24h,
+      volume: existing?.volume,
+    });
   };
-  const cross = (baseCoin: string, quoteCoin: string): number | undefined => {
+  const cross = (baseCoin: string, quoteCoin: string): { price: number; change24h?: number } | undefined => {
     const b = usd[baseCoin];
     const q = usd[quoteCoin];
-    if (typeof b === "number" && typeof q === "number" && q > 0) return b / q;
-    return undefined;
+    if (typeof b !== "number" || typeof q !== "number" || q <= 0) return undefined;
+    const cb = feed.changes24h?.[baseCoin];
+    const cq = feed.changes24h?.[quoteCoin];
+    const change24h =
+      typeof cb === "number" && typeof cq === "number" && Number.isFinite(cb) && Number.isFinite(cq)
+        ? ((1 + cb / 100) / (1 + cq / 100) - 1) * 100
+        : undefined;
+    return { price: b / q, change24h };
   };
   const jupSol = cross("jupiter-exchange-solana", "solana");
-  if (jupSol !== undefined) put("sol-jup", jupSol);
+  if (jupSol !== undefined) put("sol-jup", jupSol.price, jupSol.change24h);
   const bonkSol = cross("bonk", "solana");
-  if (bonkSol !== undefined) put("sol-bonk", bonkSol);
+  if (bonkSol !== undefined) put("sol-bonk", bonkSol.price, bonkSol.change24h);
   const wbtcEth = cross("wrapped-bitcoin", "ethereum");
-  if (wbtcEth !== undefined) put("evm-wbtc", wbtcEth);
+  if (wbtcEth !== undefined) put("evm-wbtc", wbtcEth.price, wbtcEth.change24h);
 
   return pairs.map((p) => {
     const hit = live.get(p.id);
-    if (!hit) return p; // uncovered pair keeps its random walk
+    if (!hit) return p; // uncovered pair holds last values; liveLastAt reveals staleness
 
     const wasLive = p.liveLastAt !== null;
     const prev = p.price;
@@ -100,7 +118,7 @@ export function applyLivePrices(pairs: MarketPair[], feed: PriceFeed, now: numbe
       price: hit.price,
       liveLastAt: now,
       change24h,
-      volume24h: p.volume24h * (0.9 + 0.1 * scale), // gentle re-anchor, no jumpy spikes
+      volume24h: hit.volume ?? p.volume24h * (0.9 + 0.1 * scale), // adopt feed volume; else gentle re-anchor
       liquidity: p.liquidity * (0.95 + 0.05 * scale),
       volatility: clamp01(p.volatility * 0.9 + clamp01(tickRet * 40) * 0.1),
       spark,

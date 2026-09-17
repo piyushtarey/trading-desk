@@ -47,6 +47,9 @@ interface WalletContextValue extends WalletState {
   /** Sign a typed perp order. Real eth_signTypedData_v4 with MetaMask;
    *  paper signature in demo mode (UI labels it as such). */
   signPerpOrder: (ticket: PerpTicket) => Promise<{ signature: string; signer: string }>;
+  /** Send a prepared unsigned transaction (M3 live orders). MetaMask only —
+   *  demo and disconnected wallets are rejected. Enforces the expected chain. */
+  sendTransaction: (tx: { to: string; data?: string; value?: string; chainId: number }) => Promise<string>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -57,6 +60,8 @@ const LS_KEY = "tradingdesk.wallet.v2";
 const LAMPORTS = 1_000_000_000;
 const ETH = 1e18;
 const DEMO_USD = 24_817.42;
+/** M6: the demo wallet exists only in the paper-mode dev harness. Default off. */
+const PAPER_MODE = process.env.NEXT_PUBLIC_DESK_PAPER_MODE === "true";
 
 /* ------------------------------------------------------------------ */
 /* Injected provider types (minimal)                                   */
@@ -369,6 +374,59 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [state.kind, state.address, switchToArbitrum],
   );
 
+  const sendTransaction = useCallback(
+    async (tx: { to: string; data?: string; value?: string; chainId: number }): Promise<string> => {
+      const provider = getMetaMask();
+      if (state.kind !== "metamask" || !provider) {
+        throw new Error("Connect MetaMask to send live transactions (demo wallet cannot move funds)");
+      }
+      if (!/^0x[0-9a-fA-F]{40}$/.test(tx.to)) throw new Error("Refusing to send: invalid destination address");
+      // Enforce the venue chain — never send a prepared tx on the wrong network.
+      const wantHex = `0x${tx.chainId.toString(16)}`;
+      const current = (await provider.request({ method: "eth_chainId" })) as string;
+      if (typeof current === "string" && current.toLowerCase() !== wantHex.toLowerCase()) {
+        try {
+          await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: wantHex }] });
+        } catch (err) {
+          const code = (err as { code?: number })?.code;
+          if (code === 4902 || code === -32603) {
+            const presets: Record<number, object> = {
+              42161: {
+                chainId: wantHex,
+                chainName: "Arbitrum One",
+                nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+                rpcUrls: ["https://arb1.arbitrum.io/rpc"],
+                blockExplorerUrls: ["https://arbiscan.io"],
+              },
+              421614: {
+                chainId: wantHex,
+                chainName: "Arbitrum Sepolia",
+                nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+                rpcUrls: ["https://sepolia-rollup.arbitrum.io/rpc"],
+                blockExplorerUrls: ["https://sepolia.arbiscan.io"],
+              },
+            };
+            const preset = presets[tx.chainId];
+            if (!preset) throw new Error(`Unsupported chain ${tx.chainId} — refusing to send`);
+            await provider.request({ method: "wallet_addEthereumChain", params: [preset] });
+          } else {
+            throw new Error("Chain switch rejected — refusing to send on the wrong network");
+          }
+        }
+      }
+      const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+      const from = accounts?.[0];
+      if (!from) throw new Error("No MetaMask account authorized");
+      const params: Record<string, string> = { from, to: tx.to };
+      if (tx.data) params.data = tx.data;
+      if (tx.value) params.value = tx.value;
+      const hash = (await provider.request({ method: "eth_sendTransaction", params: [params] })) as string;
+      if (!hash) throw new Error("Transaction rejected");
+      return hash;
+    },
+    [state.kind],
+  );
+
   const refreshBalance = useCallback(async () => {
     if (!state.connected || !state.address || state.kind === "demo") return;
     if (state.kind === "phantom") {
@@ -389,6 +447,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       patch({ connecting: true, error: null });
       try {
         if (kind === "demo") {
+          // M6: demo wallet is a paper-mode dev tool, not a production path.
+          if (!PAPER_MODE) throw new Error("Demo wallet is disabled — connect Phantom or MetaMask");
           const addr = "Demo" + Math.random().toString(36).slice(2, 8).toUpperCase() + "…xz";
           patch({
             connected: true,
@@ -410,6 +470,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         if (kind === "phantom") {
           const provider = await waitForProvider(getPhantom);
           if (!provider) {
+            // M6: no silent demo fallback in production — fail loudly.
+            if (!PAPER_MODE) throw new Error("Phantom not detected — install it to connect");
             // Demo fallback — desk must stay explorable without extensions
             const addr = "Demo" + Math.random().toString(36).slice(2, 8).toUpperCase() + "…xz";
             patch({
@@ -450,6 +512,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         // metamask
         const provider = await waitForProvider(getMetaMask);
         if (!provider) {
+          // M6: no silent demo fallback in production — fail loudly.
+          if (!PAPER_MODE) throw new Error("MetaMask not detected — install it to connect");
           const addr = "Demo" + Math.random().toString(36).slice(2, 8).toUpperCase() + "…xz";
           patch({
             connected: true,
@@ -541,7 +605,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   // One-time: restore a demo session immediately (no extension needed).
   // (Real-wallet sessions restore below via onlyIfTrusted / eth_accounts.)
+  // M6: demo restore only in the paper-mode harness.
   useEffect(() => {
+    if (!PAPER_MODE) return;
     let saved: string | null = null;
     try {
       saved = localStorage.getItem(LS_KEY);
@@ -672,8 +738,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [state.connected, state.kind, refreshBalance]);
 
   const value = useMemo<WalletContextValue>(
-    () => ({ ...state, connect, disconnect, refreshBalance, switchToArbitrum, signPerpOrder }),
-    [state, connect, disconnect, refreshBalance, switchToArbitrum, signPerpOrder],
+    () => ({ ...state, connect, disconnect, refreshBalance, switchToArbitrum, signPerpOrder, sendTransaction }),
+    [state, connect, disconnect, refreshBalance, switchToArbitrum, signPerpOrder, sendTransaction],
   );
   // `detected` rides on state — no extra wiring needed.
 

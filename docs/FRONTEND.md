@@ -8,6 +8,7 @@
 | `/agents` | `app/agents/page.tsx` | 3-agent overview grid (Scout 🔭 / Analyst 🧠 / Executor ⚡), duties, cycles/tasks/heartbeats, event counts, links to detail |
 | `/agents/[id]` | `app/agents/[id]/page.tsx` | Detail for `scout|analyst|executor` (Next 15 async `params`); invalid id → "unknown agent" + back link |
 | `/perps` | `app/perps/page.tsx` | Perp ticket book + open/closed perp positions; MetaMask-gated execution |
+| `/jobs` | `app/jobs/page.tsx` | All scheduled jobs: inline interval edit (10s–24h), pause/resume, run now, rename, two-step delete, add-job form (fixed 6 handler kinds) |
 | `/history` | `app/history/page.tsx` | Combined timeline with agent shortcut links + `HistoryTable pageSize=50` |
 | `GET /api/prices` | `app/api/prices/route.ts` | Live feed (see `API.md`) |
 | `POST /api/sol-balance` | `app/api/sol-balance/route.ts` | SOL balance proxy (see `API.md`) |
@@ -20,7 +21,7 @@ Root layout `app/layout.tsx:13` wraps everything in `WalletProvider > DeskProvid
 
 - `useDesk()` → `{ state, toggleRunning }`.
 - Header: tick interval (`TICK_MS/1000`s), `tick #`, clock `fmtTime(now)`, Pause/Resume button.
-- `Panel`s: `KpiCards` → `AgentBoard` → `ActivityFeed (limit=50)` + `ScheduleList` (`xl:grid-cols-3`) → `PositionsTable`.
+- `Panel`s: `WalletBalancePanel` → `KpiCards` → `AgentBoard` → `ActivityFeed (limit=50)` + `ScheduleList` (`xl:grid-cols-3`) → `PositionsTable`.
 
 ### Agents overview (`app/agents/page.tsx`)
 
@@ -41,7 +42,7 @@ Root layout `app/layout.tsx:13` wraps everything in `WalletProvider > DeskProvid
 - Hooks: `useDesk()` (`state, executePerpTicket, cancelTicket, closePerp, execError, clearExecError`), `useWallet()`.
 - Derived: `metamaskReady`, `open/closed` perp positions, `tickets.slice(0,15)`, `awaiting` count (`proposed && expiresAt > now`), `totalMargin/totalUPnl/totalNotional`.
 - KPIs: Open perps, margin at risk, open P&L (mint/flame), awaiting execution.
-- Ticket Book columns: Side / Market / Lev / Entry / Margin→Notional / Liq / TP / SL / Conf / Expires / Action. Row is `signable = proposed && !expired && metamaskReady`; button label adapts: `Execute with MetaMask | Execute (paper sign) | Connect & sign`; else `StatusChip` (signed sky, executed mint, cancelled grey, expired gold).
+- Ticket Book columns: Side / Market / Lev / Entry / Margin→Notional (with equity-sizing subtext: `sized off $X eq`, or `fixed size (no wallet)`) / Liq / TP / SL / Conf / Expires / Action. Row is `signable = proposed && !expired && metamaskReady`; button label adapts: `Execute with MetaMask | Execute (paper sign) | Connect & sign`; else `StatusChip` (signed sky, executed mint, cancelled grey, expired gold).
 - Open Perp columns: Side / Market / Lev / Qty / Entry / Mark / Margin / uPnL / Action (Close). Closed table adds Closed-via `ViaChip` (take-profit mint, stop-loss gold, liquidation flame, manual grey) + realized P&L + closed-at.
 - Paper-venue warning banner + `execError` banner with dismiss.
 
@@ -60,9 +61,10 @@ Root layout `app/layout.tsx:13` wraps everything in `WalletProvider > DeskProvid
 | `PositionsTable.tsx` | — | `state.positions` | Empty dashed state or table Symbol/Chain (SOL violet/EVM gold)/Entry/Mark/Size/P&L/P&L%; adaptive price formatting |
 | `ScheduleList.tsx` | — | `state.jobs`, `useNow(250ms)` | Per-job rows: agent chip, `▶ now` + pause/resume, progress bar (shimmer or paused grey), `every X · N runs`, paused/next-in countdown |
 | `Ticker.tsx` | — | `state.pairs`, `marketSource/lastLiveAt` | Marquee (duplicated array, 40s scroll): per-pair arrow + adaptive price + 24h%; `FeedBadge`: `LIVE·BINANCE/LIVE·COINGECKO` (<45s, mint), `STALE` (<120s, gold), else `SIM` (grey) |
-| `Sidebar.tsx` | — | `usePathname()`, `running`, events, tickets | Nav `/ ▤, /agents ◇, /perps ⚡, /history ≣`; active = exact for `/` else `startsWith`; badges: history = events count, perps = unexpired proposed count; footer running dot + `mockup v0.1` |
+| `Sidebar.tsx` | — | `usePathname()`, `running`, events, tickets, jobs | Nav `/ ▤, /agents ◇, /perps ⚡, /jobs ◷, /history ≣`; active = exact for `/` else `startsWith`; badges: history = events count, perps = unexpired proposed count, jobs = active/total; footer running dot + `mockup v0.1` |
 | `Header.tsx` | — | — | `<Ticker/>` + `<WalletButton/>` bar |
 | `WalletButton.tsx` | — | `useWallet()` + `useDesk()` (SOL/ETH price for USD) | Connect → dropdown (Phantom/MetaMask installed state + Demo); connected `Notch`: pill + dropdown (address+copy, balance+USD, network, refresh/explorer/disconnect); error/fallback messages |
+| `WalletBalancePanel.tsx` | — | `useWallet()` + desk pairs via `accountEquityUsd` (`lib/account.ts`) | Dashboard strip: account, native balance, USD estimate (= ticket-sizing equity), risk-per-ticket note; connect prompt when disconnected |
 | `ui.tsx` | `Panel({title, action?, children, className?, bodyClassName?})` | — | `section rounded-xl border bg-ink-900/60` + optional uppercase header |
 
 ## Formatting (`lib/format.ts`)
